@@ -69,6 +69,28 @@ class CorrectRequest(BaseModel):
 # Endpoints
 # ══════════════════════════════════════════════════════════════════
 
+@app.on_event("startup")
+async def startup():
+    """Pre-warm Ollama khi server khởi động — tránh cold start 2-3s lần đầu."""
+    import urllib.request, json as _json, threading
+    def _warm():
+        try:
+            payload = _json.dumps({
+                "model" : os.environ.get("OLLAMA_MODEL", "qwen2.5:1.5b"),
+                "prompt": "warmup",
+                "stream": False,
+                "options": {"num_predict": 1},
+            }).encode()
+            urllib.request.urlopen(
+                os.environ.get("OLLAMA_URL", "http://localhost:11434") + "/api/generate",
+                data=payload, timeout=60
+            )
+            print("✅ Ollama pre-warmed")
+        except Exception as e:
+            print(f"[Ollama pre-warm] {e}")
+    threading.Thread(target=_warm, daemon=True).start()
+
+
 @app.get("/health")
 def health():
     """Health check + trạng thái Ollama"""
@@ -86,7 +108,7 @@ def health():
         "status" : "ok",
         "version": "2.5",
         "ollama" : "ready" if ollama_ok else "unavailable",
-        "model"  : os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"),
+        "model"  : os.environ.get("OLLAMA_MODEL", "qwen2.5:1.5b"),
     }
 
 

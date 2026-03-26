@@ -20,7 +20,8 @@ COPY start.sh .
 RUN chmod +x start.sh
 RUN mkdir -p models
 
-# ── Pull Qwen2.5:7b khi build → cache vào image ───────────────────
-RUN ollama serve & sleep 8 && ollama pull qwen2.5:7b && pkill ollama || true
+# ── Pull Qwen2.5:1.5b khi build → cache vào image ────────────────
+# 1.5b: ~1GB, latency ~0.5s (đủ cho task phân loại 18 categories)
+RUN ollama serve & sleep 8 && ollama pull qwen2.5:1.5b && pkill ollama || true
 
 CMD ["./start.sh"]

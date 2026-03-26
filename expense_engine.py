@@ -733,25 +733,24 @@ class ExpenseEngine:
     # ── LLM fallback qua Ollama ───────────────────────────────────
     def _llm_classify(self, text: str) -> str | None:
         """
-        Gọi Ollama local (vinai/PhoWhisper → Qwen2.5).
-        Chỉ được gọi khi confidence < LLM_THRESHOLD.
+        Gọi Ollama local (Qwen2.5).
         Trả về category hoặc None nếu Ollama không khả dụng.
         """
         try:
             import urllib.request, json as _json
-            categories_str = ", ".join(ALL_CATEGORIES)
+            categories_list = "\n".join(f"- {c}" for c in ALL_CATEGORIES)
             prompt = (
-                f"Phân loại giao dịch tài chính sau vào đúng 1 category.\n"
-                f"Giao dịch: \"{text}\"\n"
-                f"Các category: {categories_str}\n"
-                f"Chỉ trả lời đúng tên category, không giải thích.\n"
-                f"Category:"
+                f"Bạn là AI phân loại chi tiêu tài chính tiếng Việt.\n"
+                f"Phân loại giao dịch sau vào đúng 1 trong các danh mục bên dưới.\n\n"
+                f"Giao dịch: \"{text}\"\n\n"
+                f"Danh mục:\n{categories_list}\n\n"
+                f"Chỉ trả lời đúng tên danh mục, không thêm gì khác."
             )
             payload = _json.dumps({
-                "model"  : os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"),
+                "model"  : os.environ.get("OLLAMA_MODEL", "qwen2.5:1.5b"),
                 "prompt" : prompt,
                 "stream" : False,
-                "options": {"temperature": 0, "num_predict": 20},
+                "options": {"temperature": 0, "num_predict": 30},
             }).encode()
 
             req = urllib.request.Request(
@@ -760,16 +759,39 @@ class ExpenseEngine:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=15) as resp:
                 result = _json.loads(resp.read())
-            answer = result.get("response", "").strip().lower()
 
-            # Match về category gần nhất
+            answer = result.get("response", "").strip().lower()
+            print(f"[Ollama] '{text}' → raw='{answer}'")
+
+            # Match chính xác trước
             for cat in ALL_CATEGORIES:
-                if cat in answer:
+                if answer.strip() == cat.lower():
+                    print(f"[Ollama] exact match → {cat}")
                     return cat
+
+            # Match substring
+            for cat in ALL_CATEGORIES:
+                if cat.lower() in answer:
+                    print(f"[Ollama] substring match → {cat}")
+                    return cat
+
+            # Match từng từ — tìm category có nhiều từ trùng nhất
+            answer_words = set(answer.split())
+            best_cat, best_score = None, 0
+            for cat in ALL_CATEGORIES:
+                cat_words = set(cat.lower().split())
+                score = len(answer_words & cat_words)
+                if score > best_score:
+                    best_score, best_cat = score, cat
+            if best_cat and best_score > 0:
+                print(f"[Ollama] word match ({best_score}) → {best_cat}")
+                return best_cat
+
+            print(f"[Ollama] no match for: '{answer}'")
         except Exception as e:
-            print(f"[Ollama] không khả dụng: {e}")
+            print(f"[Ollama] lỗi: {e}")
         return None
 
     def parse(self, text: str) -> dict:
