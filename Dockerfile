@@ -13,6 +13,7 @@ COPY main.py .
 # Tạo thư mục models
 RUN mkdir -p models
 
+# PORT được Railway inject qua env variable
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
