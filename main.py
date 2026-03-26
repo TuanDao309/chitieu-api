@@ -9,7 +9,6 @@ Endpoints:
 """
 
 import os
-import io
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,8 +42,6 @@ _asr_pipe = None
 def get_asr_pipe():
     global _asr_pipe
     if _asr_pipe is None:
-        if not HF_AVAILABLE:
-            raise HTTPException(503, "transformers chưa cài")
         from transformers import pipeline as hf_pipeline
         _asr_pipe = hf_pipeline(
             "automatic-speech-recognition",
@@ -53,12 +50,6 @@ def get_asr_pipe():
             model_kwargs={"use_safetensors": False},
         )
     return _asr_pipe
-
-try:
-    from transformers import pipeline as hf_pipeline
-    HF_AVAILABLE = True
-except ImportError:
-    HF_AVAILABLE = False
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -80,7 +71,23 @@ class CorrectRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "2.5"}
+    """Health check + trạng thái Ollama"""
+    ollama_ok = False
+    try:
+        import urllib.request
+        urllib.request.urlopen(
+            os.environ.get("OLLAMA_URL", "http://localhost:11434") + "/api/tags",
+            timeout=2
+        )
+        ollama_ok = True
+    except Exception:
+        pass
+    return {
+        "status" : "ok",
+        "version": "2.5",
+        "ollama" : "ready" if ollama_ok else "unavailable",
+        "model"  : os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"),
+    }
 
 
 @app.get("/categories")
@@ -123,16 +130,13 @@ def parse(req: ParseRequest):
 @app.post("/voice")
 async def voice(file: UploadFile = File(...)):
     """
-    Nhận file audio WAV (float32, 16kHz mono) → transcribe → parse.
-
-    FE gửi:  FormData với field "file" là audio blob
-    Response: kết quả parse giống /parse
+    Nhận file audio WAV (float32, 16kHz mono) → PhoWhisper → parse.
+    FE gửi FormData với field "file" là audio blob.
     """
     pipe = get_asr_pipe()
 
     audio_bytes = await file.read()
-    # Float32 raw bytes (từ Web Audio API hoặc recording library)
-    audio_np = np.frombuffer(audio_bytes, dtype=np.float32)
+    audio_np    = np.frombuffer(audio_bytes, dtype=np.float32)
 
     if audio_np.size == 0:
         raise HTTPException(400, "File audio rỗng")

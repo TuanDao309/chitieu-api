@@ -730,6 +730,48 @@ class ExpenseEngine:
         self.corr_cache   = load_correction_cache()
         print("✅ Engine sẵn sàng!")
 
+    # ── LLM fallback qua Ollama ───────────────────────────────────
+    def _llm_classify(self, text: str) -> str | None:
+        """
+        Gọi Ollama local (vinai/PhoWhisper → Qwen2.5).
+        Chỉ được gọi khi confidence < LLM_THRESHOLD.
+        Trả về category hoặc None nếu Ollama không khả dụng.
+        """
+        try:
+            import urllib.request, json as _json
+            categories_str = ", ".join(ALL_CATEGORIES)
+            prompt = (
+                f"Phân loại giao dịch tài chính sau vào đúng 1 category.\n"
+                f"Giao dịch: \"{text}\"\n"
+                f"Các category: {categories_str}\n"
+                f"Chỉ trả lời đúng tên category, không giải thích.\n"
+                f"Category:"
+            )
+            payload = _json.dumps({
+                "model"  : os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"),
+                "prompt" : prompt,
+                "stream" : False,
+                "options": {"temperature": 0, "num_predict": 20},
+            }).encode()
+
+            req = urllib.request.Request(
+                os.environ.get("OLLAMA_URL", "http://localhost:11434") + "/api/generate",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = _json.loads(resp.read())
+            answer = result.get("response", "").strip().lower()
+
+            # Match về category gần nhất
+            for cat in ALL_CATEGORIES:
+                if cat in answer:
+                    return cat
+        except Exception as e:
+            print(f"[Ollama] không khả dụng: {e}")
+        return None
+
     def parse(self, text: str) -> dict:
         cached_cat = fuzzy_correction_lookup(text, self.corr_cache)
         if cached_cat:
@@ -747,6 +789,15 @@ class ExpenseEngine:
         r_scores   = rule_based_score(text)
         n_scores   = nlp_score(self.model, text)
         category, confidence, method = fuse(r_scores, n_scores)
+
+        # ── LLM fallback khi confidence thấp ─────────────────────
+        LLM_THRESHOLD = float(os.environ.get("LLM_THRESHOLD", "0.5"))
+        if confidence < LLM_THRESHOLD:
+            llm_cat = self._llm_classify(text)
+            if llm_cat:
+                category = llm_cat
+                method   = "llm"
+                confidence = 0.85   # LLM confident hơn SVM khi dưới threshold
 
         from collections import defaultdict
         combined: dict[str, float] = defaultdict(float)
